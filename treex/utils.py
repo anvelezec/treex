@@ -466,3 +466,53 @@ def _check_rejit(f):
 def iter_split(key: tp.Any, num: int = 2) -> tp.Tuple[tp.Any, ...]:
     splits = jax.random.split(key, num)
     return tuple(splits[i] for i in range(num))
+
+
+def _unique_name(
+    names: tp.Set[str],
+    name: str,
+):
+
+    if name in names:
+        i = 1
+        while f"{name}_{i}" in names:
+            i += 1
+
+        name = f"{name}_{i}"
+
+    names.add(name)
+    return name
+
+
+def _unique_names(
+    names: tp.Iterable[str],
+) -> tp.Iterable[str]:
+    new_names: tp.Set[str] = set()
+
+    for name in names:
+        yield _unique_name(new_names, name)
+
+
+def _lower_snake_case(s: str) -> str:
+    s = re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
+    parts = s.split("_")
+    output_parts = []
+
+    for i in range(len(parts)):
+        if i == 0 or len(parts[i - 1]) > 1:
+            output_parts.append(parts[i])
+        else:
+            output_parts[-1] += parts[i]
+
+    return "_".join(output_parts)
+
+
+def _get_name(obj) -> str:
+    if hasattr(obj, "name") and obj.name:
+        return obj.name
+    elif hasattr(obj, "__name__") and obj.__name__:
+        return obj.__name__
+    elif hasattr(obj, "__class__") and obj.__class__.__name__:
+        return _lower_snake_case(obj.__class__.__name__)
+    else:
+        raise ValueError(f"Could not get name for: {obj}")

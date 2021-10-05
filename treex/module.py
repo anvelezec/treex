@@ -17,13 +17,11 @@ from treex.treex import Treex
 
 A = tp.TypeVar("A")
 B = tp.TypeVar("B")
+M = tp.TypeVar("M", bound="Module")
 Filter = tp.Union[
     tp.Type[tp.Type[tp.Any]],
     tp.Callable[[to.FieldInfo], bool],
 ]
-A = tp.TypeVar("A")
-B = tp.TypeVar("B")
-M = tp.TypeVar("M", bound="Module")
 
 
 @dataclass
@@ -50,6 +48,7 @@ class _Context(threading.local):
 
 
 _CONTEXT = _Context()
+
 
 # -----------------------------------------
 # Module
