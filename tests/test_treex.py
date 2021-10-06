@@ -622,3 +622,93 @@ class TestTreex:
 
         assert module.a == 1
         assert module2.a == 2
+
+    def test_compact_init(self):
+        class A(tx.Module):
+            a: int = tx.Parameter.node()
+
+            @tx.compact
+            def __call__(self):
+                a = self.get_field("a", lambda: 1)
+                return a
+
+        class B(tx.Module):
+            a: A
+            b: int = tx.Parameter.node()
+
+            @tx.compact
+            def __call__(self):
+                b = self.get_field("b", lambda: 2)
+                a = A()()
+
+                return a + b
+
+        module = B().init(42)
+
+        assert module.b == 2
+        assert module.a.a == 1
+        assert jax.tree_leaves(module) == [1, 2]
+
+    def test_compact_init_rng(self):
+        class A(tx.Module):
+            a: jnp.ndarray = tx.Parameter.node()
+
+            @tx.compact
+            def __call__(self):
+                a = self.get_field(
+                    "a", lambda: jax.random.uniform(tx.next_key(), [2, 4])
+                )
+                return a
+
+        class B(tx.Module):
+            a: A
+            b: jnp.ndarray = tx.Parameter.node()
+
+            @tx.compact
+            def __call__(self):
+                b = self.get_field("b", lambda: jax.random.uniform(tx.next_key(), [4]))
+                a = A()()
+
+                return a + b
+
+        module = B().init(42)
+
+        assert module.b.shape == (4,)
+        assert module.a.a.shape == (2, 4)
+
+    def test_reset_context_on_constructor(self):
+        from treex import module as module_m
+
+        class A(tx.Module):
+            a: jnp.ndarray = tx.Parameter.node()
+
+            def __init__(self) -> None:
+                assert module_m._CONTEXT.initializing is False
+                assert module_m._CONTEXT.key is None
+
+            @tx.compact
+            def __call__(self):
+                if self.first_run():
+                    assert module_m._CONTEXT.initializing is True
+                    assert module_m._CONTEXT.key is not None
+
+                a = self.get_field(
+                    "a", lambda: jax.random.uniform(tx.next_key(), [2, 4])
+                )
+                return a
+
+        class B(tx.Module):
+            a: A
+            b: jnp.ndarray = tx.Parameter.node()
+
+            @tx.compact
+            def __call__(self):
+                b = self.get_field("b", lambda: jax.random.uniform(tx.next_key(), [4]))
+                a = A()()
+
+                return a + b
+
+        module = B().init(42)
+
+        assert module.b.shape == (4,)
+        assert module.a.a.shape == (2, 4)

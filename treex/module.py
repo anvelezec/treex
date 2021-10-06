@@ -71,7 +71,7 @@ class ModuleMeta(to.TreeMeta):
         return obj
 
 
-class Module(Treex):
+class Module(Treex, metaclass=ModuleMeta):
     # use to.field to copy class vars to instance
     _training: bool = to.static(True)
     _initialized: bool = to.static(False)
@@ -129,7 +129,7 @@ class Module(Treex):
     def init(
         self: M,
         key: tp.Union[int, jnp.ndarray],
-        inputs: types.InputLike = to.MISSING,
+        inputs: types.InputLike = (),
         *,
         inplace: bool = False,
         call_compact: tp.Union[bool, str] = True,
