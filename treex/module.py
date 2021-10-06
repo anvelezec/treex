@@ -1,4 +1,5 @@
 import functools
+import inspect
 import threading
 import typing as tp
 from contextlib import contextmanager
@@ -27,6 +28,8 @@ Filter = tp.Union[
 @dataclass
 class _Context(threading.local):
     call_info: tp.Optional[tp.Dict["Module", tp.Tuple[types.Inputs, tp.Any]]] = None
+    initializing: bool = False
+    key: tp.Optional[jnp.ndarray] = None
 
     def __enter__(self):
         global _CONTEXT
@@ -53,6 +56,19 @@ _CONTEXT = _Context()
 # -----------------------------------------
 # Module
 # -----------------------------------------
+
+
+class ModuleMeta(to.TreeMeta):
+    def construct(cls, obj: M, *args, **kwargs) -> M:
+
+        # reset _CONTEXT during regular __init__
+        with _Context():
+            obj = super().construct(obj, *args, **kwargs)
+
+        if _CONTEXT.initializing:
+            obj._call_initializers_and_rng_init()
+
+        return obj
 
 
 class Module(Treex):
@@ -91,7 +107,33 @@ class Module(Treex):
 
         return super().__init_subclass__()
 
-    def init(self: M, key: tp.Union[int, jnp.ndarray], inplace: bool = False) -> M:
+    def _call_initializers_and_rng_init(self: M) -> M:
+        self.map(
+            lambda initializer: (
+                initializer(next_key())
+                if isinstance(initializer, types.Initializer)
+                else initializer
+            ),
+            is_leaf=lambda x: isinstance(x, types.Initializer),
+            inplace=True,
+        )
+
+        def call_module_init(module: Module):
+            if isinstance(module, Module) and not module._initialized:
+                module.rng_init(next_key())
+
+        self.apply(call_module_init, inplace=True)
+
+        return self
+
+    def init(
+        self: M,
+        key: tp.Union[int, jnp.ndarray],
+        inputs: types.InputLike = to.MISSING,
+        *,
+        inplace: bool = False,
+        call_compact: tp.Union[bool, str] = True,
+    ) -> M:
         """
         Method version of `tx.init`, it applies `self` as first argument.
 
@@ -108,35 +150,44 @@ class Module(Treex):
         Returns:
             The new module with the fields initialized.
         """
-        if isinstance(key, int):
-            key = jax.random.PRNGKey(key)
+        tree_out = self.copy() if not inplace else self
+        key = utils.Key(key)
 
-        def next_key() -> jnp.ndarray:
-            nonlocal key
-            assert isinstance(key, (np.ndarray, jnp.ndarray))
-            next_key, key = utils.iter_split(key)
-            return next_key
+        with _CONTEXT.update(key=key, initializing=True):
 
-        tree_out: M = jax.tree_map(
-            lambda initializer: (
-                initializer(next_key())
-                if isinstance(initializer, types.Initializer)
-                else initializer
-            ),
-            self,
-            is_leaf=lambda x: isinstance(x, types.Initializer),
-        )
+            tree_out._call_initializers_and_rng_init()
 
-        if inplace:
-            # here we update initialized fields by the above tree_map
-            tree_out = to.merge(self, tree_out, inplace=True)
+            # find compact methods
+            compact_methods = tuple(
+                method
+                for _name, method in inspect.getmembers(tree_out, inspect.ismethod)
+                if hasattr(method, "_treeo_compact")
+            )
 
-        def call_module_init(module: Module):
-            if isinstance(module, Module) and not module._initialized:
-                module.rng_init(next_key())
-                module._initialized = True
+            # call compact method
+            if call_compact and len(compact_methods) > 0:
 
-        return to.apply(call_module_init, tree_out, inplace=inplace)
+                if call_compact is True:
+                    if len(compact_methods) >= 2:
+                        raise ValueError(
+                            f"Multiple compact methods found in '{type(tree_out).__name__}'"
+                        )
+
+                    method = compact_methods[0]
+                else:
+                    method = getattr(tree_out, call_compact)
+
+                inputs = types.Inputs.from_value(inputs)
+                method(*inputs.args, **inputs.kwargs)
+
+            # mark initialized
+            def set_initialized(module: Module):
+                if isinstance(module, Module) and not module._initialized:
+                    module._initialized = True
+
+            tree_out = to.apply(set_initialized, tree_out, inplace=inplace)
+
+        return tree_out
 
     def train(self: M, mode: bool = True, inplace: bool = False) -> M:
         """
@@ -418,3 +469,32 @@ class Module(Treex):
             filters: additional filters passed to `filter`.
         """
         return self.filter(types.Log, *filters)
+
+
+# ---------------------------------------------------------------------------------------
+# functions
+# ---------------------------------------------------------------------------------------
+
+
+def next_key() -> jnp.ndarray:
+    if _CONTEXT.key is None:
+        raise ValueError(
+            "Key not available. Only use `.next_key()` inside the `.rng_init()` that is called"
+            "by `.init()` or manually set it via the `set_key()` context manager."
+        )
+
+    key, _CONTEXT.key = utils.iter_split(_CONTEXT.key)
+    return key
+
+
+# ---------------------------------------------------------------------------------------
+# context managers
+# ---------------------------------------------------------------------------------------
+
+
+@contextmanager
+def set_key(key: tp.Union[int, jnp.ndarray]):
+    key = utils.Key(key)
+
+    with _CONTEXT.update(key=key):
+        yield

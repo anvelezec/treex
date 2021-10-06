@@ -10,17 +10,19 @@ import jax.numpy as jnp
 import numpy as np
 import treeo as to
 import yaml
-from jax._src.numpy.lax_numpy import split
 from rich.console import Console
 
 from treex import types
 
-key = jax.random.PRNGKey
 _pymap = map
 _pyfilter = filter
 
 LEAF_TYPES = (to.Nothing, types.Initializer, type(None))
 PAD = r"{pad}"
+
+
+def Key(seed: tp.Union[int, jnp.ndarray]) -> jnp.ndarray:
+    return jax.random.PRNGKey(seed) if isinstance(seed, int) else seed
 
 
 def _get_rich_repr(table):
