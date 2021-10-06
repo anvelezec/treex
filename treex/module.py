@@ -66,7 +66,7 @@ class ModuleMeta(to.TreeMeta):
             obj = super().construct(obj, *args, **kwargs)
 
         if _CONTEXT.initializing:
-            obj._call_initializers_and_rng_init()
+            obj._call_initializers_and_setup()
 
         return obj
 
@@ -76,6 +76,10 @@ class Module(Treex, metaclass=ModuleMeta):
     _training: bool = to.static(True)
     _initialized: bool = to.static(False)
     _frozen: bool = to.static(False)
+
+    @property
+    def initializing(self) -> bool:
+        return _CONTEXT.initializing
 
     @property
     def initialized(self) -> bool:
@@ -107,7 +111,7 @@ class Module(Treex, metaclass=ModuleMeta):
 
         return super().__init_subclass__()
 
-    def _call_initializers_and_rng_init(self: M) -> M:
+    def _call_initializers_and_setup(self: M) -> M:
         self.map(
             lambda initializer: (
                 initializer(next_key())
@@ -120,7 +124,7 @@ class Module(Treex, metaclass=ModuleMeta):
 
         def call_module_init(module: Module):
             if isinstance(module, Module) and not module._initialized:
-                module.rng_init(next_key())
+                module.setup()
 
         self.apply(call_module_init, inplace=True)
 
@@ -132,7 +136,7 @@ class Module(Treex, metaclass=ModuleMeta):
         inputs: types.InputLike = (),
         *,
         inplace: bool = False,
-        call_compact: tp.Union[bool, str] = True,
+        forward_method: tp.Optional[str] = "__call__",
     ) -> M:
         """
         Method version of `tx.init`, it applies `self` as first argument.
@@ -143,7 +147,7 @@ class Module(Treex, metaclass=ModuleMeta):
         1. The input `key` is split and iteratively updated before passing a derived value to any
             process that requires initialization.
         2. `Initializer`s are called and applied to the module first.
-        3. `Module.rng_init` methods are called last.
+        3. `Module.setup` methods are called last.
 
         Arguments:
             key: The seed to use for initialization.
@@ -152,33 +156,17 @@ class Module(Treex, metaclass=ModuleMeta):
         """
         tree_out = self.copy() if not inplace else self
         key = utils.Key(key)
+        inputs = types.Inputs.from_value(inputs)
 
         with _CONTEXT.update(key=key, initializing=True):
 
-            tree_out._call_initializers_and_rng_init()
+            # call initializers
+            tree_out._call_initializers_and_setup()
 
-            # find compact methods
-            compact_methods = tuple(
-                method
-                for _name, method in inspect.getmembers(tree_out, inspect.ismethod)
-                if hasattr(method, "_treeo_compact")
-            )
-
-            # call compact method
-            if call_compact and len(compact_methods) > 0:
-
-                if call_compact is True:
-                    if len(compact_methods) >= 2:
-                        raise ValueError(
-                            f"Multiple compact methods found in '{type(tree_out).__name__}'"
-                        )
-
-                    method = compact_methods[0]
-                else:
-                    method = getattr(tree_out, call_compact)
-
-                inputs = types.Inputs.from_value(inputs)
-                method(*inputs.args, **inputs.kwargs)
+            # run forward
+            if forward_method is not None:
+                forward = getattr(tree_out, forward_method)
+                forward(*inputs.args, **inputs.kwargs)
 
             # mark initialized
             def set_initialized(module: Module):
@@ -246,7 +234,7 @@ class Module(Treex, metaclass=ModuleMeta):
         """
         return self.freeze(False, inplace=inplace)
 
-    def rng_init(self, key: jnp.ndarray) -> None:
+    def setup(self) -> None:
         pass
 
     def tabulate(
@@ -479,8 +467,8 @@ class Module(Treex, metaclass=ModuleMeta):
 def next_key() -> jnp.ndarray:
     if _CONTEXT.key is None:
         raise ValueError(
-            "Key not available. Only use `.next_key()` inside the `.rng_init()` that is called"
-            "by `.init()` or manually set it via the `set_key()` context manager."
+            "Key not available. Only use `.next_key()` inside `.setup()` called"
+            "by `.init()` or manually set it using a `set_key()` context manager."
         )
 
     key, _CONTEXT.key = utils.iter_split(_CONTEXT.key)

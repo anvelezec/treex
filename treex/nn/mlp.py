@@ -59,8 +59,7 @@ class MLP(Module):
         self.activation = activation
         self.layers = [
             Linear(
-                features_in=features_in,
-                features_out=features_out,
+                features=features_out,
                 use_bias=use_bias,
                 dtype=dtype,
                 precision=precision,

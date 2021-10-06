@@ -164,9 +164,10 @@ class TestTreex:
         assert not isinstance(mlp_next.linear2.n, tx.Nothing)
 
     def test_update_initializers(self):
-        m = tx.Linear(2, 3)
-        m2 = m.init(42)
+        x = np.random.uniform(size=(10, 2))
 
+        m = tx.Linear(3)
+        m2 = m.init(42, x)
         m = m.merge(m2)
 
         assert isinstance(m.kernel, jnp.ndarray)
@@ -272,46 +273,46 @@ class TestTreex:
         n = 0
 
         class A(tx.Module):
-            def rng_init(self, key):
+            def setup(self):
                 nonlocal n
                 n = n + 1
 
         module = A()
 
-        module = module.init(42)
-        module = module.init(42)
+        module = module.init(42, forward_method=None)
+        module = module.init(42, forward_method=None)
 
         assert n == 1
 
     def test_initialized(self):
         class A(tx.Module):
-            def rng_init(self, key):
+            def setup(self):
                 self.x = 420
 
         module = A()
         assert not module.initialized
 
-        module = module.init(42)
+        module = module.init(42, forward_method=None)
 
         assert module.x == 420
         assert module.initialized
 
     def test_initialized_inplace(self):
         class A(tx.Module):
-            def rng_init(self, key):
+            def setup(self):
                 self.x = 420
 
         module = A()
         assert not module.initialized
 
-        module.init(42, inplace=True)
+        module.init(42, inplace=True, forward_method=None)
 
         assert module.x == 420
         assert module.initialized
 
     def test_train(self):
 
-        mlp = MLP(2, 3, 5).init(42)
+        mlp = MLP(2, 3, 5).init(42, forward_method=None)
 
         assert mlp.training
         assert mlp.linear1.training
@@ -331,7 +332,7 @@ class TestTreex:
 
     def test_train_inplace(self):
 
-        mlp = MLP(2, 3, 5).init(42)
+        mlp = MLP(2, 3, 5).init(42, forward_method=None)
 
         assert mlp.training
         assert mlp.linear1.training
@@ -359,7 +360,7 @@ class TestTreex:
                 self.linear1 = tx.Linear(din, dmid)
                 self.linear2 = tx.Linear(dmid, dout)
 
-        mlp = MLP(2, 3, 5).init(42)
+        mlp = MLP(2, 3, 5).init(42, forward_method=None)
 
     def test_repr(self):
         class MyModule(tx.Module):
@@ -432,13 +433,12 @@ class TestTreex:
 
                 return dict(y1=y1, y2=y2)
 
-        mlp = MyModule().init(42)
+        x = np.random.uniform(size=(10, 256))
+        mlp = MyModule().init(42, x)
         mlp = jax.tree_map(
             lambda x: jnp.asarray(x) if not isinstance(x, tx.Initializer) else x, mlp
         )
         # mlp = mlp.filter(tx.Parameter)
-
-        x = np.random.uniform(size=(10, 256))
 
         rep = mlp.tabulate(inputs=tx.Inputs(x))
 
@@ -455,8 +455,8 @@ class TestTreex:
 
             def __init__(self):
 
-                self.a = tx.Linear(3, 4)
-                self.b = tx.Linear(3, 4)
+                self.a = tx.Linear(4)
+                self.b = tx.Linear(4)
 
         mod = Mod().init(42)
 
@@ -688,7 +688,7 @@ class TestTreex:
 
             @tx.compact
             def __call__(self):
-                if self.first_run():
+                if self.first_run:
                     assert module_m._CONTEXT.initializing is True
                     assert module_m._CONTEXT.key is not None
 

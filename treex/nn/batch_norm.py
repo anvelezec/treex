@@ -7,7 +7,7 @@ import treeo as to
 from flax.linen import normalization as flax_module
 
 from treex import types, utils
-from treex.module import Module
+from treex.module import Module, next_key
 
 
 class BatchNorm(Module):
@@ -124,7 +124,8 @@ class BatchNorm(Module):
             axis_index_groups=self.axis_index_groups,
         )
 
-    def rng_init(self, key: jnp.ndarray):
+    def setup(self):
+        key = next_key()
 
         batch_size = 10  # random
 
@@ -161,7 +162,6 @@ class BatchNorm(Module):
         Returns:
             Normalized inputs (the same shape as inputs).
         """
-        assert self.initialized, "Module not initialized"
 
         params = {}
 
@@ -183,7 +183,7 @@ class BatchNorm(Module):
         training = (
             not use_running_average
             if use_running_average is not None
-            else self.training and not self.frozen
+            else self.training and not self.frozen and not self.initializing
         )
 
         # call apply

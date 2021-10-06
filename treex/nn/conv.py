@@ -3,10 +3,11 @@ import typing as tp
 import jax
 import jax.numpy as jnp
 import numpy as np
+import treeo as to
 from flax.linen import linear as flax_module
 
 from treex import types
-from treex.module import Module
+from treex.module import Module, next_key
 
 
 class Conv(Module):
@@ -17,7 +18,7 @@ class Conv(Module):
     Main differences:
 
     * receives `features_in` as a first argument since shapes must be statically known.
-    * `features` argument is renamed to `features_out`.
+    * `features` argument is renamed to `features`.
     """
 
     # pytree
@@ -26,7 +27,7 @@ class Conv(Module):
 
     # props
     features_in: int
-    features_out: int
+    features: int
     kernel_size: tp.Union[int, tp.Iterable[int]]
     strides: tp.Optional[tp.Iterable[int]]
     padding: tp.Union[str, tp.Iterable[tp.Tuple[int, int]]]
@@ -47,8 +48,7 @@ class Conv(Module):
 
     def __init__(
         self,
-        features_in: int,
-        features_out: int,
+        features: int,
         kernel_size: tp.Union[int, tp.Iterable[int]],
         strides: tp.Optional[tp.Iterable[int]] = None,
         padding: tp.Union[str, tp.Iterable[tp.Tuple[int, int]]] = "SAME",
@@ -69,8 +69,7 @@ class Conv(Module):
     ):
         """
         Arguments:
-            features_in: the number of input features.
-            features_out: number of convolution filters.
+            features: number of convolution filters.
             kernel_size: shape of the convolutional kernel. For 1D convolution,
                 the kernel size can be passed as an integer. For all other cases, it must
                 be a sequence of integers.
@@ -97,8 +96,7 @@ class Conv(Module):
             bias_init: initializer for the bias.
         """
 
-        self.features_in = features_in
-        self.features_out = features_out
+        self.features = features
         self.kernel_size = kernel_size
         self.strides = strides
         self.padding = padding
@@ -117,7 +115,7 @@ class Conv(Module):
     @property
     def module(self) -> flax_module.Conv:
         return flax_module.Conv(
-            features=self.features_out,
+            features=self.features,
             kernel_size=self.kernel_size,
             strides=self.strides,
             padding=self.padding,
@@ -131,29 +129,7 @@ class Conv(Module):
             bias_init=self.bias_init,
         )
 
-    def rng_init(self, key: jnp.ndarray):
-        if isinstance(self.module.kernel_size, int):
-            ndim = 1
-            mindim = self.module.kernel_size
-        else:
-            ndim = len(list(self.module.kernel_size))
-            mindim = min(self.module.kernel_size)
-
-        mindim *= 2
-
-        shape = list(range(mindim, mindim + ndim + 1))
-        shape[-1] = self.features_in
-
-        x = jax.random.uniform(key, shape=shape)
-
-        variables = self.module.init(key, x).unfreeze()
-
-        # Extract collections
-        self.kernel = variables["params"]["kernel"]
-
-        if self.use_bias:
-            self.bias = variables["params"]["bias"]
-
+    @to.compact
     def __call__(self, x: np.ndarray) -> jnp.ndarray:
         """Applies a convolution to the inputs.
 
@@ -163,13 +139,22 @@ class Conv(Module):
         Returns:
             The convolved data.
         """
-        assert self.initialized, "Module not initialized"
+        if self.first_run:
+            key = next_key()
+            variables = self.module.init({"params": key}, x).unfreeze()
 
+            # Extract collections
+            self.kernel = variables["params"]["kernel"]
+
+            if self.use_bias:
+                self.bias = variables["params"]["bias"]
+
+        assert self.kernel is not None
         params = dict(kernel=self.kernel)
 
         if self.use_bias:
+            assert self.bias is not None
             params["bias"] = self.bias
 
         output = self.module.apply(dict(params=params), x)
-
         return tp.cast(jnp.ndarray, output)

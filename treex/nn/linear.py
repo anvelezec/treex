@@ -3,10 +3,11 @@ import typing as tp
 import jax
 import jax.numpy as jnp
 import numpy as np
+import treeo as to
 from flax.linen import linear as flax_module
 
 from treex import types
-from treex.module import Module
+from treex.module import Module, next_key
 
 
 class Linear(Module):
@@ -25,8 +26,7 @@ class Linear(Module):
     bias: tp.Optional[jnp.ndarray] = types.Parameter.node()
 
     # static
-    features_in: int
-    features_out: int
+    features: int
     use_bias: bool
     dtype: tp.Any
     precision: tp.Any
@@ -41,8 +41,7 @@ class Linear(Module):
 
     def __init__(
         self,
-        features_in: int,
-        features_out: int,
+        features: int,
         use_bias: bool = True,
         dtype: tp.Any = jnp.float32,
         precision: tp.Any = None,
@@ -67,8 +66,7 @@ class Linear(Module):
             bias_init: initializer function for the bias.
         """
 
-        self.features_in = features_in
-        self.features_out = features_out
+        self.features = features
         self.use_bias = use_bias
         self.dtype = dtype
         self.precision = precision
@@ -81,7 +79,7 @@ class Linear(Module):
     @property
     def module(self) -> flax_module.Dense:
         return flax_module.Dense(
-            features=self.features_out,
+            features=self.features,
             use_bias=self.use_bias,
             dtype=self.dtype,
             precision=self.precision,
@@ -89,20 +87,7 @@ class Linear(Module):
             bias_init=self.bias_init,
         )
 
-    def rng_init(self, key: jnp.ndarray):
-        batch_size = 10  # random
-        x = jax.random.uniform(key, (batch_size, self.features_in))
-
-        variables = self.module.init({"params": key}, x)
-
-        # Extract collections
-        params = variables["params"].unfreeze()
-
-        self.kernel = params["kernel"]
-
-        if self.use_bias:
-            self.bias = params["bias"]
-
+    @to.compact
     def __call__(self, x: np.ndarray) -> jnp.ndarray:
         """Applies a linear transformation to the inputs along the last dimension.
 
@@ -112,7 +97,18 @@ class Linear(Module):
         Returns:
             The transformed input.
         """
-        assert self.initialized, "Module is not initialized."
+
+        if self.first_run:
+            key = next_key()
+            variables = self.module.init({"params": key}, x)
+
+            # Extract collections
+            params = variables["params"].unfreeze()
+
+            self.kernel = params["kernel"]
+
+            if self.use_bias:
+                self.bias = params["bias"]
 
         assert self.kernel is not None
         params = {"kernel": self.kernel}
