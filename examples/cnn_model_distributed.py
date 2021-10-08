@@ -13,8 +13,6 @@ import typer
 from tqdm import tqdm
 
 import treex as tx
-from treex import metrics
-from treex.utils import _check_rejit
 
 Batch = tp.Mapping[str, np.ndarray]
 Module = tx.Sequential
@@ -109,6 +107,7 @@ class Model(tx.Module):
 
         # update metric
         y, y_pred = jax.lax.all_gather((y, y_pred), axis_name="device")
+        y, y_pred = y.reshape(-1), y_pred.reshape(-1, y_pred.shape[-1])
         self.metric.update(y_true=y, y_pred=y_pred)
 
         return loss, self
@@ -123,6 +122,7 @@ class Model(tx.Module):
         loss, (self.module, y_pred) = self.loss_fn(self.module, self.module, x, y)
 
         y, y_pred = jax.lax.all_gather((y, y_pred), axis_name="device")
+        y, y_pred = y.reshape(-1), y_pred.reshape(-1, y_pred.shape[-1])
         _batch_metric = self.metric(y_true=y, y_pred=y_pred)
 
         return loss, self
@@ -162,7 +162,7 @@ def main(
             tx.Linear(128, 10),
         ),
         optimizer=optax.adamw(1e-3),
-        metric=tx.metrics.Accuracy(argmax_preds=True),
+        metric=tx.metrics.Accuracy(),
     )
 
     model: Model = model.init_step(42, device_idx)
@@ -211,7 +211,7 @@ def main(
 
         epoch_train_loss = jnp.mean(jnp.stack(train_losses))
         epoch_train_losses.append(epoch_train_loss)
-        epoch_train_accs.append(model.metric.compute()[0])
+        epoch_train_accs.append(model.metric.compute())
 
         # ---------------------------------------
         # test
@@ -240,7 +240,7 @@ def main(
 
         epoch_test_loss = jnp.mean(jnp.stack(test_losses))
         epoch_test_losses.append(epoch_test_loss)
-        epoch_test_accs.append(model.metric.compute()[0])
+        epoch_test_accs.append(model.metric.compute())
 
         print(
             f"[{epoch}] loss_train={epoch_train_loss}, acc_train={epoch_train_accs[-1]}, loss_test={epoch_test_loss}, acc_test={epoch_test_accs[-1]}"

@@ -6,7 +6,7 @@ Initialization is performed by calling the `Module.init` method or the `tx.init`
 There are two initialization mechanisms in Treex:
 
 1. Using an `Initializer` object to initialize a field. 
-2. Defining the `setup` method on a Module.
+2. Defining the `rng_init` method on a Module.
 
 `Initializer`s contain a function that take a `key` and return an initial value, `init` replaces leaves with `Initializer` objects with the initial value their function outputs for the given key:
 
@@ -29,7 +29,7 @@ module # MyModule(a=array([0.034...]), b=2)
 module.initialized # True
 ```
 
-The second is to override the `setup` method, this is useful for fields that require complex initialization logic.
+The second is to override the `rng_init` method, this is useful for fields that require complex initialization logic.
 
 ```python
 class MyModule(tx.Module):
@@ -41,11 +41,11 @@ class MyModule(tx.Module):
             lambda key: jax.random.uniform(key, shape=(1,)))
         self.b = None
 
-    def setup(self):
+    def rng_init(self, key):
         # self.a is already initialized at this point
-        self.b = 10.0 * self.a + jax.random.normal(tx.next_key(), shape=(1,))
+        self.b = 10.0 * self.a + jax.random.normal(key, shape=(1,))
 
 module = MyModule().init(42)
 module # MyModule(a=array([0.3]), b=array([3.2]))
 ```
-As shown here, `Initializer`s are always called before `setup`.
+As shown here, `Initializer`s are always called before `rng_init`.
